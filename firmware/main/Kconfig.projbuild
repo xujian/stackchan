@@ -19,6 +19,14 @@ config OTA_URL
     help
         The application will access this URL to check for new firmwares and server address.
 
+config STACKCHAN_SKIP_AUTO_UPGRADE
+    bool "Skip automatic firmware upgrade on boot"
+    default y
+    help
+        Still check the version (needed for activation), but don't install a newer
+        firmware automatically, so self-built firmware isn't overwritten by OTA.
+        Manual upgrade from the settings page or the MCP tool still works.
+
 choice
     prompt "Flash Assets"
     default FLASH_DEFAULT_ASSETS if !USE_EMOTE_MESSAGE_STYLE

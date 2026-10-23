@@ -22,8 +22,9 @@ def clone_or_update_repo(
             check=True,
         )
 
-    # 应用 patch
-    if patch_path:
+    # 应用 patch（可以是单个路径，也可以是按顺序应用的列表）
+    patch_paths = [patch_path] if isinstance(patch_path, str) else (patch_path or [])
+    for patch_path in patch_paths:
         patch_full_path = (
             patch_path
             if os.path.isabs(patch_path)
@@ -52,8 +53,10 @@ def fetch_dependencies():
         branch = repo.get("branch")
         with_submodules = repo.get("with_submodules", False)
         patch = repo.get("patch")
-        if patch and not os.path.isabs(patch):
-            patch = os.path.join(script_dir, patch)
+        if isinstance(patch, str):
+            patch = [patch]
+        if patch:
+            patch = [p if os.path.isabs(p) else os.path.join(script_dir, p) for p in patch]
         clone_or_update_repo(repo["url"], repo_path, branch, with_submodules, patch)
 
 
