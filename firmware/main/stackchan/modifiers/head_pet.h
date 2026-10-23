@@ -20,7 +20,11 @@ namespace stackchan {
  */
 class HeadPetModifier : public Modifier {
 public:
-    HeadPetModifier(uint32_t restoreDelayMs = 3000) : _restore_delay_ms(restoreDelayMs)
+    /**
+     * @param showDecorators false: only the Happy emotion, no heart / shy decorators
+     */
+    HeadPetModifier(uint32_t restoreDelayMs = 3000, bool showDecorators = true)
+        : _restore_delay_ms(restoreDelayMs), _show_decorators(showDecorators)
     {
         // 绑定信号
         _signal_connection = GetHAL().onHeadPetGesture.connect([this](HeadPetGesture gesture) {
@@ -83,12 +87,15 @@ private:
         avatar.setEmotion(avatar::Emotion::Happy);
 
         // 添加爱心装饰
-        int duration = Random::getInstance().getInt(1500, 2500);
-        avatar.removeDecorator(_heart_decorator_id);
-        avatar.removeDecorator(_shy_decorator_id);
-        _heart_decorator_id =
-            avatar.addDecorator(std::make_unique<avatar::HeartDecorator>(lv_screen_active(), duration, 500));
-        _shy_decorator_id = avatar.addDecorator(std::make_unique<avatar::ShyDecorator>(lv_screen_active(), duration));
+        if (_show_decorators) {
+            int duration = Random::getInstance().getInt(1500, 2500);
+            avatar.removeDecorator(_heart_decorator_id);
+            avatar.removeDecorator(_shy_decorator_id);
+            _heart_decorator_id =
+                avatar.addDecorator(std::make_unique<avatar::HeartDecorator>(lv_screen_active(), duration, 500));
+            _shy_decorator_id =
+                avatar.addDecorator(std::make_unique<avatar::ShyDecorator>(lv_screen_active(), duration));
+        }
 
         // 动作反馈
         perform_pet_motion(stackchan);
@@ -150,6 +157,7 @@ private:
     bool _is_waiting_restore = false;
     uint32_t _restore_tick   = 0;
     uint32_t _restore_delay_ms;
+    bool _show_decorators;
     int _heart_decorator_id = -1;
     int _shy_decorator_id   = -1;
 

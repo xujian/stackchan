@@ -16,7 +16,11 @@ namespace stackchan {
  */
 class ImuEventModifier : public Modifier {
 public:
-    ImuEventModifier(uint32_t reactionDurationMs = 4000) : _reaction_duration_ms(reactionDurationMs)
+    /**
+     * @param showDecorators false: switch to the Dizzy emotion instead of hiding the eyes behind decorators
+     */
+    ImuEventModifier(uint32_t reactionDurationMs = 4000, bool showDecorators = true)
+        : _reaction_duration_ms(reactionDurationMs), _show_decorators(showDecorators)
     {
         _signal_connection = GetHAL().onImuMotionEvent.connect([this](ImuMotionEvent event) {
             if (event == ImuMotionEvent::Shake) {
@@ -77,15 +81,22 @@ private:
             auto& avatar = stackchan.avatar();
 
             avatar.setModifyLock(true);
-            avatar.leftEye().setVisible(false);
-            avatar.rightEye().setVisible(false);
 
-            stackchan.avatar().removeDecorator(_dizzy_decorator_id);
-            stackchan.avatar().removeDecorator(_shy_decorator_id);
-            _dizzy_decorator_id =
-                stackchan.avatar().addDecorator(std::make_unique<avatar::DizzyDecorator>(lv_screen_active(), 0, 300));
-            _shy_decorator_id =
-                stackchan.avatar().addDecorator(std::make_unique<avatar::ShyDecorator>(lv_screen_active(), 0));
+            if (_show_decorators) {
+                avatar.leftEye().setVisible(false);
+                avatar.rightEye().setVisible(false);
+
+                stackchan.avatar().removeDecorator(_dizzy_decorator_id);
+                stackchan.avatar().removeDecorator(_shy_decorator_id);
+                _dizzy_decorator_id = stackchan.avatar().addDecorator(
+                    std::make_unique<avatar::DizzyDecorator>(lv_screen_active(), 0, 300));
+                _shy_decorator_id =
+                    stackchan.avatar().addDecorator(std::make_unique<avatar::ShyDecorator>(lv_screen_active(), 0));
+            } else {
+                // 用眩晕表情代替装饰，结束后恢复
+                _prev_emotion = avatar.getEmotion();
+                avatar.setEmotion(avatar::Emotion::Dizzy);
+            }
         }
 
         // 刷新恢复时间和切换时间
@@ -105,6 +116,9 @@ private:
         avatar.setModifyLock(false);
         avatar.leftEye().setVisible(true);
         avatar.rightEye().setVisible(true);
+        if (!_show_decorators) {
+            avatar.setEmotion(_prev_emotion);
+        }
         avatar.mouth().setWeight(0);
         avatar.mouth().setRotation(0);
 
@@ -132,6 +146,9 @@ private:
 
     int _dizzy_decorator_id = -1;
     int _shy_decorator_id   = -1;
+
+    bool _show_decorators;
+    avatar::Emotion _prev_emotion = avatar::Emotion::Neutral;
 };
 
 }  // namespace stackchan
