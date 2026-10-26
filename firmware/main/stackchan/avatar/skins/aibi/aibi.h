@@ -54,7 +54,7 @@ public:
 private:
     // Everything that defines how the eye looks, so it can be tweened as one
     struct Shape {
-        int eyeW, eyeH, eyeOpa;
+        int eyeW, eyeH, eyeX, eyeY, eyeOpa;
         int arcRadius, arcWidth, arcSweep, arcOpa;  // arcRadius = center line, arcSweep = degrees each side
         int spiralOpa;
         int lidY, lidRotation;
@@ -75,6 +75,9 @@ private:
     lv_obj_t* _spiral = nullptr;  // lv_line, owned (and deleted) by _container
     std::array<lv_point_precise_t, _spiral_points> _spiral_pts{};
     bool _dizzy = false;
+
+    bool _surprised = false;
+    bool _thinking  = false;
 
     void draw_spiral(int rotation);
     void start_spin();

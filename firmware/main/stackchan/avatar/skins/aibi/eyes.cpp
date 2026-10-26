@@ -28,6 +28,23 @@ static const int _arc_sweep_deg  = 55;  // degrees on each side of the top, bigg
 // Angry / sad: top edge is cut at a slant
 static const int _slant_depth_pct = 30;  // cut line at the eye center, % of height from the top
 
+// Sad: the eye also droops and gets thinner, so it doesn't read as a mirrored angry
+static const int _sad_drop      = 8;   // pixels down
+static const int _sad_width_pct = 85;
+
+// Doubt: one eye stays open, the other squints (right eye on screen)
+static const int _doubt_squint_weight = 45;
+
+// Surprised: bigger and rounder, popping up a little
+static const int _surprised_w_pct = 125;
+static const int _surprised_h_pct = 112;
+static const int _surprised_rise  = 4;
+
+// Thinking: both eyes drift up and to the right of the screen, flatter, the right one squints more
+static const Vector2i _thinking_offset   = Vector2i(6, -8);
+static const int _thinking_weight_left  = 80;
+static const int _thinking_weight_right = 65;
+
 // Shape transitions (blink, emotion change), driven by lv_anim so they stay smooth
 // even when the stackchan update task slows down while xiaozhi is talking
 static const uint32_t _anim_ms = 120;
@@ -40,7 +57,7 @@ static const int _spiral_line_w       = 4;
 static const int _spiral_size         = _spiral_outer_r * 2 + _spiral_line_w + 2;
 static const uint32_t _spiral_turn_ms = 1200;  // one full turn
 
-static const int _margin      = 8;
+static const int _margin      = 12;  // room for surprised and thinking to grow and move
 static const int _max_eye_w   = _eye_height.y * _eye_aspect_x16 / 16 * _closed_width_pct / 100;
 static const int _container_w = _max_eye_w * 2 + _margin * 2;  // the happy arc is wider than the eye
 static const int _container_h = _eye_height.y + _margin * 2;
@@ -148,13 +165,18 @@ void AibiEyes::setSize(int size)
 
 void AibiEyes::update_shape()
 {
-    const int base_h = map_range(_size, -100, 100, _eye_height.x, _eye_height.y);
-    const int base_w = base_h * _eye_aspect_x16 / 16;
+    int base_h = map_range(_size, -100, 100, _eye_height.x, _eye_height.y);
+    int base_w = base_h * _eye_aspect_x16 / 16;
+    if (_surprised) {
+        base_w = base_w * _surprised_w_pct / 100;
+        base_h = base_h * _surprised_h_pct / 100;
+    }
 
     // Back to -1800~1800, sign = tilt direction. |rotation| > 900 means happy, same as DefaultEyes
     const int rotation = _rotation > 1800 ? _rotation - 3600 : _rotation;
     const bool happy   = rotation > 900 || rotation < -900;
     const bool slanted = !happy && rotation != 0;
+    const bool sad     = slanted && rotation < 0;
 
     Shape target;
 
@@ -170,17 +192,23 @@ void AibiEyes::update_shape()
         const float sweep = _arc_sweep_deg * 3.14159f / 180.0f;
         target.eyeW       = (int)(2 * target.arcRadius * std::sin(sweep)) + target.arcWidth;
         target.eyeH       = target.arcWidth;
+        target.eyeX       = 0;
+        target.eyeY       = 0;
         target.eyeOpa     = LV_OPA_TRANSP;
     } else {
         // Squash and stretch: closing the eye makes it flatter and wider instead of covering it
-        target.eyeW   = map_range(_weight, 0, 100, base_w * _closed_width_pct / 100, base_w);
-        target.eyeH   = map_range(_weight, 0, 100, _closed_height, base_h);
+        const int open_w = sad ? base_w * _sad_width_pct / 100 : base_w;
+        target.eyeW      = map_range(_weight, 0, 100, open_w * _closed_width_pct / 100, open_w);
+        target.eyeH      = map_range(_weight, 0, 100, _closed_height, base_h);
+        target.eyeX   = _thinking ? _thinking_offset.x : 0;
+        target.eyeY   = sad ? _sad_drop : _surprised ? -_surprised_rise : _thinking ? _thinking_offset.y : 0;
         target.eyeOpa = _dizzy ? LV_OPA_TRANSP : LV_OPA_COVER;
     }
 
     // Unused lid is parked above the container instead of hidden, so it slides in rather than pops.
     // Mirror the tilt for the right eye so both inner corners move together
-    const int lid_bottom = slanted ? -target.eyeH / 2 + target.eyeH * _slant_depth_pct / 100 : -_container_h / 2;
+    const int lid_bottom =
+        slanted ? target.eyeY - target.eyeH / 2 + target.eyeH * _slant_depth_pct / 100 : -_container_h / 2;
     target.lidY          = lid_bottom - _container_h / 2;
     target.lidRotation   = slanted ? (_is_left_eye ? rotation : -rotation) : 0;
 
@@ -216,6 +244,8 @@ void AibiEyes::anim_exec_cb(lv_anim_t* anim, int32_t progress)
     self->apply_shape({
         lerp(a.eyeW, b.eyeW),
         lerp(a.eyeH, b.eyeH),
+        lerp(a.eyeX, b.eyeX),
+        lerp(a.eyeY, b.eyeY),
         lerp(a.eyeOpa, b.eyeOpa),
         lerp(a.arcRadius, b.arcRadius),
         lerp(a.arcWidth, b.arcWidth),
@@ -230,6 +260,7 @@ void AibiEyes::anim_exec_cb(lv_anim_t* anim, int32_t progress)
 void AibiEyes::apply_shape(const Shape& shape)
 {
     _eye->setSize(shape.eyeW, shape.eyeH);
+    _eye->setPos(shape.eyeX, shape.eyeY);
     _eye->setBgOpa(shape.eyeOpa);
 
     // Keep the arc's visible part vertically centered on the eye, using the full happy sweep
@@ -255,7 +286,9 @@ void AibiEyes::setEmotion(const Emotion& emotion)
         return;
     }
 
-    _dizzy = emotion == Emotion::Dizzy;
+    _dizzy     = emotion == Emotion::Dizzy;
+    _surprised = emotion == Emotion::Surprised;
+    _thinking  = emotion == Emotion::Thinking;
     if (_dizzy) {
         start_spin();
     } else {
@@ -282,13 +315,19 @@ void AibiEyes::setEmotion(const Emotion& emotion)
             apply_style(100, -250);
             break;
         case Emotion::Doubt:
-            apply_style(70, 0);
+            apply_style(_is_left_eye ? 100 : _doubt_squint_weight, 0);
             break;
         case Emotion::Sleepy:
             apply_style(0, 0);
             break;
         case Emotion::Dizzy:
             apply_style(100, 0);
+            break;
+        case Emotion::Surprised:
+            apply_style(100, 0);
+            break;
+        case Emotion::Thinking:
+            apply_style(_is_left_eye ? _thinking_weight_left : _thinking_weight_right, 0);
             break;
         default:
             break;
