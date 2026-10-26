@@ -538,15 +538,7 @@ void StackChanAvatarDisplay::SetStatus(const char* status)
     }
 
     if (is_idle) {
-        // Start idle motion
-        ESP_LOGW(TAG, "Start idle motion");
-        if (idle_motion_modifier_id_ < 0) {
-            if (idle_motion_level_ > 0) {
-                CreateIdleMotionModifier();
-            }
-            idle_expression_modifier_id_ = stackchan.addModifier(std::make_unique<IdleExpressionModifier>());
-        }
-
+        StartIdleMotion();
         _is_xiaozhi_idle = true;
     } else {
         // Stop idle motion
@@ -571,6 +563,27 @@ void StackChanAvatarDisplay::SetStatus(const char* status)
     if (is_sleeping_) {
         avatar.setSpeech("");
     }
+}
+
+void StackChanAvatarDisplay::StartIdleMotion()
+{
+    ESP_LOGW(TAG, "Start idle motion");
+    auto& stackchan = GetStackChan();
+    if (idle_motion_modifier_id_ < 0) {
+        if (idle_motion_level_ > 0) {
+            CreateIdleMotionModifier();
+        }
+        idle_expression_modifier_id_ = stackchan.addModifier(std::make_unique<IdleExpressionModifier>());
+    }
+}
+
+void StackChanAvatarDisplay::ResumeIdleMotion()
+{
+    if (!GetStackChan().hasAvatar()) {
+        return;
+    }
+    DisplayLockGuard lock(this);
+    StartIdleMotion();
 }
 
 void StackChanAvatarDisplay::ShowNotification(const char* notification, int duration_ms)

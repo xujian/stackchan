@@ -5,6 +5,7 @@
 #include "application.h"
 #include "config.h"
 #include "power_save_timer.h"
+#include "nap_timer.h"
 #include "i2c_device.h"
 #include "axp2101.h"
 #include "settings.h"
@@ -339,7 +340,15 @@ private:
 
 class M5StackCoreS3Board : public WifiBoard {
 private:
-    static constexpr int kPowerSaveSleepDelaySeconds  = 300;
+    // Naps: random idle time before sleeping, random nap length, no waking up by itself at night
+    static constexpr NapTimer::Config kNapConfig = {
+        .sleepAfterMinS = 3 * 60,
+        .sleepAfterMaxS = 10 * 60,
+        .napMinS        = 2 * 60,
+        .napMaxS        = 8 * 60,
+        .nightStartHour = 23,
+        .nightEndHour   = 7,
+    };
     static constexpr int kPowerStatePollIntervalMs    = 1000;
     static constexpr int kPowerReadErrorLogIntervalMs = 10000;
 
@@ -360,31 +369,35 @@ private:
     StackChanCamera* camera_;
     esp_timer_handle_t touchpad_timer_;
     PowerSaveTimer* power_save_timer_;
+    NapTimer* nap_timer_;
     hal_bridge::XiaozhiConfig_t xiaozhi_config_;
     std::mutex power_state_mutex_;
     PowerState power_state_;
-    bool last_power_save_enabled_             = false;
+    bool shutdown_allowed_                    = false;
     int64_t last_power_state_check_ms_        = 0;
     int64_t last_power_error_log_ms_          = 0;
     uint32_t consecutive_power_read_failures_ = 0;
 
-    bool ShouldEnablePowerSave(bool has_external_power, bool is_discharging) const
+    bool ShouldAllowShutdown(bool has_external_power, bool is_discharging) const
     {
         return is_discharging || (has_external_power && xiaozhi_config_.allowShutdownWhenCharging);
     }
 
-    void UpdatePowerSaveEnabled(bool has_external_power, bool is_discharging)
+    // The power save timer always runs, so the avatar also falls asleep when plugged in.
+    // Only the idle shutdown still depends on the power source
+    void UpdateShutdownAllowed(bool has_external_power, bool is_discharging)
     {
-        const bool should_enable_power_save = ShouldEnablePowerSave(has_external_power, is_discharging);
-        if (should_enable_power_save == last_power_save_enabled_) {
+        const bool allowed = ShouldAllowShutdown(has_external_power, is_discharging);
+        if (allowed == shutdown_allowed_) {
             return;
         }
 
-        ESP_LOGI(TAG, "Power save timer %s: external_power=%d, discharging=%d, allowShutdownWhenCharging=%d",
-                 should_enable_power_save ? "enabled" : "disabled", has_external_power, is_discharging,
+        ESP_LOGI(TAG, "Idle shutdown %s: external_power=%d, discharging=%d, allowShutdownWhenCharging=%d",
+                 allowed ? "allowed" : "blocked", has_external_power, is_discharging,
                  xiaozhi_config_.allowShutdownWhenCharging);
-        power_save_timer_->SetEnabled(should_enable_power_save);
-        last_power_save_enabled_ = should_enable_power_save;
+        shutdown_allowed_ = allowed;
+        // Plugging or unplugging counts as activity, so unplugging after a long idle doesn't power off at once
+        power_save_timer_->WakeUp();
     }
 
     void RefreshPowerState()
@@ -411,7 +424,7 @@ private:
         }
 
         if (status_err == ESP_OK) {
-            UpdatePowerSaveEnabled(has_external_power, discharging);
+            UpdateShutdownAllowed(has_external_power, discharging);
         }
 
         if (status_err != ESP_OK || level_err != ESP_OK) {
@@ -451,24 +464,30 @@ private:
         const int seconds_to_shutdown = xiaozhi_config_.idleShutdownTimeSeconds > 0
                                             ? static_cast<int>(xiaozhi_config_.idleShutdownTimeSeconds)
                                             : -1;
-        const int seconds_to_sleep    = seconds_to_shutdown == -1
-                                            ? kPowerSaveSleepDelaySeconds
-                                            : std::min(kPowerSaveSleepDelaySeconds, seconds_to_shutdown);
 
-        ESP_LOGI(TAG, "Init power save timer: sleep=%d s, shutdown=%d s, allow_shutdown_when_charging=%d",
-                 seconds_to_sleep, seconds_to_shutdown, xiaozhi_config_.allowShutdownWhenCharging);
+        ESP_LOGI(TAG, "Init power save timer: shutdown=%d s, allow_shutdown_when_charging=%d", seconds_to_shutdown,
+                 xiaozhi_config_.allowShutdownWhenCharging);
 
-        power_save_timer_ = new PowerSaveTimer(-1, seconds_to_sleep, seconds_to_shutdown);
-        power_save_timer_->OnEnterSleepMode([this]() {
-            GetDisplay()->SetPowerSaveMode(true);
-            // GetBacklight()->SetBrightness(10);
+        // Sleeping is NapTimer's job, this one only handles the idle shutdown on battery
+        power_save_timer_ = new PowerSaveTimer(-1, -1, seconds_to_shutdown);
+        power_save_timer_->OnShutdownRequest([this]() {
+            if (shutdown_allowed_) {
+                pmic_->PowerOff();
+            }
         });
-        power_save_timer_->OnExitSleepMode([this]() {
-            GetDisplay()->SetPowerSaveMode(false);
-            GetBacklight()->RestoreBrightness();
-        });
-        power_save_timer_->OnShutdownRequest([this]() { pmic_->PowerOff(); });
+        power_save_timer_->SetEnabled(true);
         RefreshPowerState();
+
+        nap_timer_ = new NapTimer(
+            kNapConfig, [this]() { GetDisplay()->SetPowerSaveMode(true); },
+            [this](bool byItself) {
+                GetDisplay()->SetPowerSaveMode(false);
+                GetBacklight()->RestoreBrightness();
+                // Woken by a conversation, SetStatus restarts idle motion once xiaozhi is idle again
+                if (byItself) {
+                    static_cast<StackChanAvatarDisplay*>(display_)->ResumeIdleMotion();
+                }
+            });
     }
 
     void InitializeI2c()
@@ -734,6 +753,7 @@ public:
     {
         if (level != PowerSaveLevel::LOW_POWER) {
             power_save_timer_->WakeUp();
+            nap_timer_->WakeUp();
         }
         WifiBoard::SetPowerSaveLevel(level);
     }
