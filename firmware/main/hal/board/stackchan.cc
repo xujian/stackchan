@@ -20,6 +20,7 @@
 #include <algorithm>
 #include <mutex>
 #include "stackchan_camera.h"
+#include "assets/assets.h"
 #include "hal_bridge.h"
 #include <hal/hal.h>
 
@@ -348,6 +349,8 @@ private:
         .napMaxS        = 8 * 60,
         .nightStartHour = 23,
         .nightEndHour   = 7,
+        .snoreMinS      = 8,
+        .snoreMaxS      = 15,
     };
     static constexpr int kPowerStatePollIntervalMs    = 1000;
     static constexpr int kPowerReadErrorLogIntervalMs = 10000;
@@ -487,6 +490,26 @@ private:
                 if (byItself) {
                     static_cast<StackChanAvatarDisplay*>(display_)->ResumeIdleMotion();
                 }
+            },
+            [this](NapTimer::Sound sound) {
+                std::string_view ogg;
+                switch (sound) {
+                    case NapTimer::Sound::FallAsleep:
+                        ogg = OGG_NAP_YAWN;
+                        break;
+                    case NapTimer::Sound::Snore:
+                        // Every snore resets PowerSaveTimer's idle count, so it would never shut down on battery
+                        if (shutdown_allowed_) {
+                            return;
+                        }
+                        ogg = OGG_NAP_SNORE;
+                        break;
+                    case NapTimer::Sound::WakeUp:
+                        ogg = OGG_NAP_WAKE;
+                        break;
+                }
+                // Hand it to the main task, PlaySound can block on a full decode queue
+                Application::GetInstance().Schedule([ogg]() { Application::GetInstance().PlaySound(ogg); });
             });
     }
 

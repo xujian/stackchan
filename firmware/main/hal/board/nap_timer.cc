@@ -9,8 +9,9 @@
 
 #define TAG "NapTimer"
 
-NapTimer::NapTimer(const Config& config, std::function<void()> onSleep, std::function<void(bool)> onWake)
-    : config_(config), on_sleep_(std::move(onSleep)), on_wake_(std::move(onWake))
+NapTimer::NapTimer(const Config& config, std::function<void()> onSleep, std::function<void(bool)> onWake,
+                   std::function<void(Sound)> onSound)
+    : config_(config), on_sleep_(std::move(onSleep)), on_wake_(std::move(onWake)), on_sound_(std::move(onSound))
 {
     sleep_after_ = RandomBetween(config_.sleepAfterMinS, config_.sleepAfterMaxS);
 
@@ -42,22 +43,27 @@ void NapTimer::WakeUp()
 void NapTimer::Tick()
 {
     std::lock_guard<std::mutex> lock(mutex_);
-    const bool idle = Application::GetInstance().CanEnterSleepMode();
+    auto& app = Application::GetInstance();
 
     if (!asleep_) {
-        idle_s_ = idle ? idle_s_ + 1 : 0;
+        idle_s_ = app.CanEnterSleepMode() ? idle_s_ + 1 : 0;
         if (idle_s_ >= sleep_after_) {
-            asleep_     = true;
-            asleep_s_   = 0;
-            nap_length_ = RandomBetween(config_.napMinS, config_.napMaxS);
+            asleep_       = true;
+            asleep_s_     = 0;
+            nap_length_   = RandomBetween(config_.napMinS, config_.napMaxS);
+            next_snore_s_ = RandomBetween(config_.snoreMinS, config_.snoreMaxS);
             ESP_LOGI(TAG, "Falling asleep after %d s idle, nap %d s", idle_s_, nap_length_);
             on_sleep_();
+            if (!IsNight()) {
+                on_sound_(Sound::FallAsleep);
+            }
         }
         return;
     }
 
-    // Busy without a WakeUp call, e.g. a state change that doesn't touch the power level
-    if (!idle) {
+    // Busy without a WakeUp call, e.g. a state change that doesn't touch the power level.
+    // Not CanEnterSleepMode(): our own snoring keeps the audio queue busy and would wake us up
+    if (app.GetDeviceState() != kDeviceStateIdle) {
         Wake(false);
         return;
     }
@@ -65,6 +71,15 @@ void NapTimer::Tick()
     asleep_s_++;
     if (asleep_s_ >= nap_length_ && !IsNight()) {
         Wake(true);
+        on_sound_(Sound::WakeUp);
+        return;
+    }
+
+    if (asleep_s_ >= next_snore_s_) {
+        next_snore_s_ = asleep_s_ + RandomBetween(config_.snoreMinS, config_.snoreMaxS);
+        if (!IsNight()) {
+            on_sound_(Sound::Snore);
+        }
     }
 }
 
