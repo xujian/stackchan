@@ -96,7 +96,7 @@ def snore():
     breath = bandpass(rng.standard_normal(len(te)), 800, 3000) * 0.15
     exhale = (whistle + breath) * env(len(te), 0.12, 0.55)
 
-    return norm(np.concatenate([inhale, gap, exhale]), -14)
+    return norm(np.concatenate([inhale, gap, exhale]), -22)
 
 
 def wake():
